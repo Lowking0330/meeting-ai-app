@@ -57,7 +57,7 @@ if audio_value:
             video_file = genai.upload_file(path=tmp_file_path, mime_type="audio/wav")
             
             # B. 設定模型
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            model = genai.GenerativeModel('gemini-1.5-flash-001')
             
             # C. 設定提示詞 (Prompt)
             # Gemini 是多模態模型，可以直接「聽」聲音並回答問題，不需要先轉成文字！
@@ -104,3 +104,4 @@ if audio_value:
         # 清除暫存檔
         if os.path.exists(tmp_file_path):
             os.remove(tmp_file_path)
+
