@@ -1,99 +1,106 @@
 import streamlit as st
 import os
-from openai import OpenAI
+import google.generativeai as genai
 from dotenv import load_dotenv
+import tempfile
 
-# --- 設定頁面 ---
-st.set_page_config(page_title="AI 會議秘書 (手機版)", page_icon="🎙️")
+# --- 1. 設定頁面 ---
+st.set_page_config(page_title="AI 會議秘書 (Gemini版)", page_icon="⚡")
 
-# --- 側邊欄：設定 API Key ---
-with st.sidebar:
-    st.header("🔐 設定")
-    # 嘗試從環境變數讀取，若無則讓使用者輸入
+# --- 2. 設定 API Key ---
+# 嘗試從 Secrets 或環境變數讀取
+if "GOOGLE_API_KEY" in st.secrets:
+    api_key = st.secrets["GOOGLE_API_KEY"]
+else:
     load_dotenv()
-    env_key = os.getenv("OPENAI_API_KEY")
-    
-    api_key = st.text_input("輸入 OpenAI API Key", value=env_key if env_key else "", type="password")
-    
-    st.info("💡 電腦端啟動後，請確認手機連上同一個 WiFi，並輸入 Network URL。")
+    api_key = os.getenv("GOOGLE_API_KEY")
 
-# --- 主畫面 ---
-st.title("🎙️ AI 會議記錄神器")
-st.caption("繁體中文優化 | 語音轉文字 | 重點摘要")
+# 側邊欄供手動輸入 (備用)
+with st.sidebar:
+    st.header("⚙️ 設定")
+    if not api_key:
+        api_key = st.text_input("輸入 Google Gemini API Key", type="password")
+    st.info("💡 使用 Google Gemini 1.5 Flash 模型 (免費版)")
 
-# --- 檢查 API Key ---
+# --- 3. 初始化 Gemini ---
 if not api_key:
-    st.warning("請先在側邊欄輸入 OpenAI API Key 才能開始！")
+    st.warning("請先設定 Google API Key 才能使用！")
     st.stop()
 
-client = OpenAI(api_key=api_key)
+try:
+    genai.configure(api_key=api_key)
+except Exception as e:
+    st.error(f"API Key 設定錯誤: {e}")
+    st.stop()
 
-# --- 錄音區塊 ---
-st.markdown("### 1. 錄製會議")
-# 這是 Streamlit 新版功能，手機瀏覽器可直接呼叫麥克風
-audio_value = st.audio_input("按下方紅色麥克風按鈕開始/停止")
+# --- 4. 主畫面邏輯 ---
+st.title("⚡ AI 會議記錄神器 (免費版)")
+st.caption("Powered by Google Gemini 1.5 Flash | 繁體中文優化")
+
+# 錄音介面
+audio_value = st.audio_input("點擊下方麥克風開始錄製會議")
 
 if audio_value:
-    st.success("錄音完成，開始 AI 分析...")
+    st.success("錄音完成！AI 正在聽取並整理內容...")
     
-    # 建立兩個分頁：摘要結果 / 原始逐字稿
-    tab1, tab2 = st.tabs(["📝 會議紀要 (AI)", "💬 原始逐字稿"])
+    # 建立臨時檔案來存放錄音 (Gemini 需要實體檔案路徑或 Bytes)
+    # Streamlit 的錄音檔是 BytesIO，我們先存成暫存檔
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
+        tmp_file.write(audio_value.getvalue())
+        tmp_file_path = tmp_file.name
 
     try:
-        # --- 階段 1: Whisper 聽打 ---
-        with st.spinner("🎧 正在將語音轉為文字 (Whisper)..."):
-            audio_value.name = "input.wav"
-            transcript = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio_value,
-                language="zh",
-                prompt="This is a business meeting in Taiwan. Please transcribe in Traditional Chinese."
+        # 顯示進度條
+        with st.spinner("🚀 正在上傳音訊並生成摘要 (這通常很快)..."):
+            
+            # A. 上傳檔案到 Google
+            video_file = genai.upload_file(path=tmp_file_path, mime_type="audio/wav")
+            
+            # B. 設定模型
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            
+            # C. 設定提示詞 (Prompt)
+            # Gemini 是多模態模型，可以直接「聽」聲音並回答問題，不需要先轉成文字！
+            prompt = """
+            你是一位專業的台灣會議秘書。請仔細聆聽這段會議錄音，並用「繁體中文 (台灣)」撰寫會議紀要。
+            
+            請依照以下結構輸出 Markdown 格式：
+            
+            ## 📅 會議紀要
+            
+            ### 🎯 會議主旨
+            (一句話總結這場會議在討論什麼)
+            
+            ### 🔑 關鍵決策
+            * (列出達成的共識)
+            
+            ### 📝 詳細摘要
+            (分點說明討論內容，去除贅字，語氣需專業)
+            
+            ### ✅ 待辦事項 (Action Items)
+            | 負責人 | 待辦事項 | 期限 |
+            | :--- | :--- | :--- |
+            | (若無提到人名則留空) | (具體事項) | (若無提到時間則留空) |
+            """
+            
+            # D. 發送請求 (音訊 + 提示詞)
+            response = model.generate_content([prompt, video_file])
+            
+            # 顯示結果
+            st.markdown(response.text)
+            
+            # 提供下載
+            st.download_button(
+                label="📥 下載會議紀錄",
+                data=response.text,
+                file_name="meeting_minutes.md",
+                mime="text/markdown"
             )
-            raw_text = transcript.text
-
-        # 顯示逐字稿
-        with tab2:
-            st.text_area("逐字稿內容", raw_text, height=300)
-
-        # --- 階段 2: GPT-4o 摘要 ---
-        with tab1:
-            if not raw_text:
-                st.error("無法辨識出語音內容，請重試。")
-            else:
-                with st.spinner("🧠 正在生成結構化筆記 (GPT-4o)..."):
-                    system_prompt = """
-                    你是一位專業的台灣會議記錄秘書。請閱讀下方的逐字稿，產出一份專業的會議紀要。
-                    
-                    【處理規則】
-                    1. **用語修正**：將大陸用語轉為台灣習慣（例：視頻->影片、質量->品質、項目->專案）。
-                    2. **格式要求**：
-                       - 🎯 會議目的
-                       - 🔑 關鍵決策 (列點)
-                       - ✅ 待辦事項 (誰/做什麼/何時)
-                    3. **去除廢話**：刪除贅字與重複語句。
-                    """
-                    
-                    response = client.chat.completions.create(
-                        model="gpt-4o",
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": raw_text}
-                        ],
-                        temperature=0.3
-                    )
-                    summary = response.choices[0].message.content
-                
-                # 顯示漂亮的 Markdown 結果
-                st.markdown(summary)
-                
-                # 下載按鈕
-                st.download_button(
-                    label="📥 下載會議紀錄",
-                    data=summary,
-                    file_name="meeting_minutes.md",
-                    mime="text/markdown"
-                )
 
     except Exception as e:
-
         st.error(f"發生錯誤: {e}")
+        
+    finally:
+        # 清除暫存檔
+        if os.path.exists(tmp_file_path):
+            os.remove(tmp_file_path)
