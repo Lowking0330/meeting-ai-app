@@ -47,7 +47,7 @@ if audio_value:
                 model="whisper-1",
                 file=audio_value,
                 language="zh",
-                prompt="這是一場台灣的商務會議討論，請使用繁體中文，不要使用簡體字。"
+                prompt="This is a business meeting in Taiwan. Please transcribe in Traditional Chinese."
             )
             raw_text = transcript.text
 
@@ -95,4 +95,5 @@ if audio_value:
                 )
 
     except Exception as e:
+
         st.error(f"發生錯誤: {e}")
