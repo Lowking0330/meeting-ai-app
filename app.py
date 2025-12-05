@@ -5,55 +5,96 @@ from dotenv import load_dotenv
 import tempfile
 
 # --- 1. 設定頁面 ---
-st.set_page_config(page_title="AI 會議秘書 (Gemini版)", page_icon="⚡")
+st.set_page_config(page_title="AI 會議秘書 (Gemini 2.0)", page_icon="⚡")
 
 # --- 2. 設定 API Key ---
-# 嘗試從 Secrets 或環境變數讀取
 if "GOOGLE_API_KEY" in st.secrets:
     api_key = st.secrets["GOOGLE_API_KEY"]
 else:
     load_dotenv()
     api_key = os.getenv("GOOGLE_API_KEY")
 
-# 側邊欄供手動輸入 (備用)
 with st.sidebar:
     st.header("⚙️ 設定")
     if not api_key:
         api_key = st.text_input("輸入 Google Gemini API Key", type="password")
-    st.info("💡 使用 Google Gemini 1.5 Flash 模型 (免費版)")
+    st.info("💡 目前使用模型：Gemini 2.0 Flash (最新版)")
 
-# --- 3. 初始化 Gemini ---
+# --- 3. 初始化 ---
 if not api_key:
     st.warning("請先設定 Google API Key 才能使用！")
     st.stop()
 
-genai.configure(api_key=api_key)
+try:
+    genai.configure(api_key=api_key)
+except Exception as e:
+    st.error(f"API Key 設定錯誤: {e}")
+    st.stop()
 
-# --- 🔍 自我診斷區塊 (新增) ---
-# 這段程式會列出目前環境真正能用的所有模型，並印在側邊欄
-with st.sidebar:
-    st.markdown("### 🛠️ 模型診斷")
+# --- 4. 主畫面邏輯 ---
+st.title("⚡ AI 會議記錄神器")
+st.caption("Powered by Google Gemini 2.0 Flash | 繁體中文優化")
+
+# 錄音介面
+audio_value = st.audio_input("點擊下方麥克風開始錄製會議")
+
+if audio_value:
+    st.success("錄音完成！AI 正在聽取並整理內容...")
+    
+    # 建立臨時檔案
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
+        tmp_file.write(audio_value.getvalue())
+        tmp_file_path = tmp_file.name
+
     try:
-        available_models = [m.name for m in genai.list_models()]
-        st.write("目前可用模型清單：")
-        st.code(available_models)
-        
-        # 自動選擇一個可用的模型
-        if "models/gemini-1.5-flash" in available_models:
-            target_model = "gemini-1.5-flash"
-            st.success("✅ 成功偵測到 Flash 模型")
-        elif "models/gemini-1.5-flash-001" in available_models:
-            target_model = "gemini-1.5-flash-001"
-            st.success("✅ 使用 001 版本")
-        else:
-            target_model = "gemini-pro" # 萬一真的沒有，回退到舊版
-            st.warning("⚠️ 找不到 Flash，暫時使用 gemini-pro")
+        with st.spinner("🚀 正在上傳音訊並生成摘要 (Gemini 2.0 處理中)..."):
             
+            # A. 上傳檔案
+            video_file = genai.upload_file(path=tmp_file_path, mime_type="audio/wav")
+            
+            # B. 設定模型 (使用您清單中有的 2.0 Flash)
+            model = genai.GenerativeModel('gemini-2.0-flash')
+            
+            # C. 設定提示詞
+            prompt = """
+            你是一位專業的台灣會議秘書。請仔細聆聽這段會議錄音，並用「繁體中文 (台灣)」撰寫會議紀要。
+            
+            請依照以下結構輸出 Markdown 格式：
+            
+            ## 📅 會議紀要
+            
+            ### 🎯 會議主旨
+            (一句話總結這場會議在討論什麼)
+            
+            ### 🔑 關鍵決策
+            * (列出達成的共識)
+            
+            ### 📝 詳細摘要
+            (分點說明討論內容，去除贅字，語氣需專業)
+            
+            ### ✅ 待辦事項 (Action Items)
+            | 負責人 | 待辦事項 | 期限 |
+            | :--- | :--- | :--- |
+            | (若無提到人名則留空) | (具體事項) | (若無提到時間則留空) |
+            """
+            
+            # D. 發送請求
+            response = model.generate_content([prompt, video_file])
+            
+            # 顯示結果
+            st.markdown(response.text)
+            
+            # 提供下載
+            st.download_button(
+                label="📥 下載會議紀錄",
+                data=response.text,
+                file_name="meeting_minutes.md",
+                mime="text/markdown"
+            )
+
     except Exception as e:
-        st.error(f"無法取得模型清單: {e}")
-        target_model = "gemini-1.5-flash" # 預設值
-
-# ... (後面接原本的 st.title 和錄音功能，但在 model = ... 那行要改成下面這樣) ...
-
-# 在後面使用模型時，請將原本的 model = ... 改成：
-model = genai.GenerativeModel(target_model)
+        st.error(f"發生錯誤: {e}")
+        
+    finally:
+        if os.path.exists(tmp_file_path):
+            os.remove(tmp_file_path)
